@@ -108,10 +108,12 @@ class Crawler
                 $this->traverseChildren($childLinks, $depth - 1);
             }
         } catch (\Guzzle\Http\Exception\CurlException $e) {
+            $this->links[$url]['visited'] = true;
             $this->links[$url]['status_code'] = 'error';
             $this->links[$url]['error_code'] = $e->getCode();
             $this->links[$url]['error_message'] = $e->getMessage();
         } catch (\Exception $e) {
+            $this->links[$url]['visited'] = true;
             $this->links[$url]['status_code'] = 'error';
             $this->links[$url]['error_code'] = $e->getCode();
             $this->links[$url]['error_message'] = $e->getMessage();
@@ -185,7 +187,6 @@ class Crawler
 
                     if ($node_url_is_crawlable === true) {
                         // Ensure URL is formatted as absolute
-
                         if (preg_match("@^http(s)?@", $node_url) == false) {
                             if (strpos($node_url, '/') === 0) {
                                 $parsed_url = parse_url($this->baseUrl);
@@ -209,6 +210,7 @@ class Crawler
                         $childLinks[$hash]['dont_visit'] = true;
                         $childLinks[$hash]['external_link'] = false;
                         $childLinks[$hash]['referrer'] = array();
+                        $childLinks[$hash]['frequency'] = $childLinks[$hash]['frequency'] + 1;
                     }
                 }
 
