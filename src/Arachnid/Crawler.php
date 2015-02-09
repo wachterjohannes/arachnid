@@ -63,14 +63,7 @@ class Crawler
     {
         if ($url === null) {
             $url = $this->baseUrl;
-            $this->links[$url] = array(
-                'links_text' => array('BASE_URL'),
-                'absolute_url' => $url,
-                'frequency' => 1,
-                'visited' => false,
-                'external_link' => false,
-                'original_urls' => array($url)
-            );
+            $this->links[$url] = $this->initLink($url);
         }
 
         $this->traverseSingle($url, $this->maxDepth);
@@ -96,13 +89,6 @@ class Crawler
             $client = new Client();
             $client->followRedirects();
 
-            if (filter_var($url, FILTER_VALIDATE_URL) === false) {
-                $this->links[$url]['status_code'] = 'error';
-                $this->links[$url]['error_message'] = 'No valid URL';
-
-                return;
-            }
-
             $crawler = $client->request('GET', $url);
             $statusCode = $client->getResponse()->getStatus();
 
@@ -114,7 +100,7 @@ class Crawler
                 $this->extractMeta($crawler, $hash);
 
                 $childLinks = array();
-                if (isset($this->links[$hash]['external_link']) === true && $this->links[$hash]['external_link'] === false) {
+                if ($this->links[$hash]['external_link'] === false) {
                     $childLinks = $this->extractLinksInfo($crawler, $hash);
                 }
 
@@ -149,36 +135,26 @@ class Crawler
             if (isset($this->links[$hash]) === false) {
                 $this->links[$hash] = $info;
             } else {
-                if (!isset($info['original_urls'])) {
-                    $info['original_urls'] = array();
-                }
-                if (!isset($info['links_text'])) {
-                    $info['links_text'] = array();
-                }
-
-                $this->links[$hash]['original_urls'] = isset($this->links[$hash]['original_urls']) ? array_merge(
+                $this->links[$hash]['original_urls'] = array_merge(
                     $this->links[$hash]['original_urls'],
                     $info['original_urls']
-                ) : $info['original_urls'];
-                $this->links[$hash]['links_text'] = isset($this->links[$hash]['links_text']) ? array_merge(
+                );
+
+                $this->links[$hash]['links_text'] = array_merge(
                     $this->links[$hash]['links_text'],
                     $info['links_text']
-                ) : $info['links_text'];
+                );
 
-                if (isset($this->links[$hash]['visited']) === true && $this->links[$hash]['visited'] === true) {
-                    $oldFrequency = isset($info['frequency']) ? $info['frequency'] : 0;
-                    $this->links[$hash]['frequency'] = isset($this->links[$hash]['frequency']) ? $this->links[$hash]['frequency'] + $oldFrequency : 1;
+                if ($this->links[$hash]['visited'] === true) {
+                    $oldFrequency = $info['frequency'];
+                    $this->links[$hash]['frequency'] = $this->links[$hash]['frequency'] + $oldFrequency;
                 }
             }
 
-            if (isset($this->links[$hash]['visited']) === false) {
-                $this->links[$hash]['visited'] = false;
-            }
-
-            if (empty($url) === false && $this->links[$hash]['visited'] === false && isset($this->links[$hash]['dont_visit']) === false) {
+            if (empty($url) === false && $this->links[$hash]['visited'] === false && $this->links[$hash]['dont_visit'] === false) {
                 $this->traverseSingle(
                     $this->normalizeLink(
-                        isset($childLinks[$url]['absolute_url']) ? $childLinks[$url]['absolute_url'] : ''
+                        $childLinks[$url]['absolute_url']
                     ),
                     $depth
                 );
@@ -203,6 +179,7 @@ class Crawler
                 $hash = $this->normalizeLink($node_url);
 
                 if (isset($this->links[$hash]) === false) {
+                    $childLinks[$hash] = $this->initLink();
                     $childLinks[$hash]['original_urls'][$node_url] = $node_url;
                     $childLinks[$hash]['links_text'][$node_text] = $node_text;
 
@@ -227,7 +204,7 @@ class Crawler
 
                         // Additional metadata
                         $childLinks[$hash]['visited'] = false;
-                        $childLinks[$hash]['frequency'] = isset($childLinks[$hash]['frequency']) ? $childLinks[$hash]['frequency'] + 1 : 1;
+                        $childLinks[$hash]['frequency'] = $childLinks[$hash]['frequency'] + 1;
                     } else {
                         $childLinks[$hash]['dont_visit'] = true;
                         $childLinks[$hash]['external_link'] = false;
@@ -235,13 +212,8 @@ class Crawler
                     }
                 }
 
-                // referrer init if not exists
-                if (!isset($childLinks[$hash]['referrer'])) {
-                    $childLinks[$hash]['referrer'] = array();
-                }
-
-                // add referrer
-                if (!in_array($url, $childLinks[$hash]['referrer'])) {
+                if(isset($childLinks[$hash])) {
+                    // add referrer
                     $childLinks[$hash]['referrer'][] = $url;
                 }
             }
@@ -294,13 +266,14 @@ class Crawler
 
         if ($meta_count > 0) {
             $crawler->filter('meta')->each(
-                function (\Symfony\Component\DomCrawler\Crawler $node, $i) use ($url) {
+                function (\Symfony\Component\DomCrawler\Crawler $node) use ($url) {
                     $content = trim($node->attr('content'));
+
+                    // extract name of meta (could be "name" or "property")
                     $name = trim($node->attr('name'));
                     $property = trim($node->attr('property'));
-                    $this->links[$url]['meta_contents'][$name !== '' ? $name : $property] = trim(
-                        $node->attr('content')
-                    );
+
+                    $this->links[$url]['meta_contents'][$name !== '' ? $name : $property] = trim($content);
                 }
             );
         }
@@ -346,7 +319,7 @@ class Crawler
 
     /**
      * Normalize link (remove hash, etc.)
-     * @param  string $url
+     * @param  string $uri
      * @return string
      */
     protected function normalizeLink($uri)
@@ -356,8 +329,8 @@ class Crawler
 
     /**
      * extrating the relative path from url string
-     * @param  type $url
-     * @return type
+     * @param  string $url
+     * @return string
      */
     protected function getPathFromUrl($url)
     {
@@ -366,6 +339,30 @@ class Crawler
         } else {
             return $url;
         }
+    }
+
+    /**
+     * init an link for result
+     * @param string $absoluteUrl
+     * @return array
+     */
+    private function initLink($absoluteUrl = null)
+    {
+        return array(
+            'status_code' => null,
+            'links_text' => array(),
+            'absolute_url' => $absoluteUrl,
+            'frequency' => 0,
+            'visited' => false,
+            'external_link' => false,
+            'original_urls' => array($absoluteUrl),
+            'h1_count' => 0,
+            'h1_contents' => array(),
+            'meta_count' => 0,
+            'meta_contents' => array(),
+            'dont_visit' => false,
+            'referrer' => array()
+        );
     }
 
 }
